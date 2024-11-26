@@ -27,6 +27,7 @@ def get_configs(model, colab):
 
     # prepare the checkpoint
     ckpt_dir = Path('./weights')
+    ckpt_path = ''
     if not ckpt_dir.exists():
         ckpt_dir.mkdir()
     if model == 'SinSR':
