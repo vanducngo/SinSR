@@ -13,6 +13,7 @@ from utils import util_image
 from basicsr.utils.download_util import load_file_from_url
 
 def get_configs(model, colab):
+    configs = None
     if model == 'SinSR':
         if colab:
             configs = OmegaConf.load('/content/SinSR/configs/SinSR.yaml')
