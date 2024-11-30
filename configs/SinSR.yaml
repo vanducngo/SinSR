@@ -96,8 +96,8 @@ data:
     params:
       dir_paths: []
       txt_file_path: [
-                      'traindata/train.txt', 
-                      'traindata/ffhq256.txt',
+                      '/content/SinSR/traindata/train.txt', 
+                      '/content/SinSR/traindata/ffhq256.txt',
                      ] 
       im_exts: ['JPEG', ]
       io_backend:

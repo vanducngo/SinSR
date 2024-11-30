@@ -26,7 +26,7 @@ def get_parser(**parser_kwargs):
             )
     parser.add_argument(
             "--steps",
-            type=int,
+            type=int, 
             default=15,
             help="Hyper-parameters of diffusion steps",
             )
