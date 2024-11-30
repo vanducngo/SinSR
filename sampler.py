@@ -64,7 +64,7 @@ class BaseSampler:
 
     def setup_dist(self, gpu_id=None):
         num_gpus = torch.cuda.device_count()
-        assert num_gpus == 1, 'Please assign one available GPU using CUDA_VISIBLE_DEVICES!'
+        # assert num_gpus == 1, 'Please assign one available GPU using CUDA_VISIBLE_DEVICES!'
 
         self.num_gpus = num_gpus
         self.rank = int(os.environ['LOCAL_RANK']) if num_gpus > 1 else 0

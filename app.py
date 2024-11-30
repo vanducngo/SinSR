@@ -13,6 +13,7 @@ from utils import util_image
 from basicsr.utils.download_util import load_file_from_url
 
 def get_configs(model, colab):
+    configs = None
     if model == 'SinSR':
         if colab:
             configs = OmegaConf.load('/content/SinSR/configs/SinSR.yaml')
@@ -27,6 +28,7 @@ def get_configs(model, colab):
 
     # prepare the checkpoint
     ckpt_dir = Path('./weights')
+    ckpt_path = ''
     if not ckpt_dir.exists():
         ckpt_dir.mkdir()
     if model == 'SinSR':
