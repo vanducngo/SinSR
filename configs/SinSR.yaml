@@ -1,7 +1,7 @@
 model:
   target: models.unet.UNetModelSwin
   ckpt_path: ~
-  teacher_ckpt_path: weights/resshift_realsrx4_s15_v1.pth
+  teacher_ckpt_path: /content/SinSR/weights/resshift_realsrx4_s15_v1.pth
   params:
     image_size: 64
     in_channels: 6
@@ -128,7 +128,7 @@ data:
   val:
     type: folder
     params:
-      dir_path: testdata/RealSet128/
+      dir_path: /content/SinSR/testdata/RealSet128/
       dir_path_extra: ~
       transform_type: default
       transform_kwargs:
