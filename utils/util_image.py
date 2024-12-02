@@ -822,10 +822,11 @@ class ImageSpliterTh:
     def __init__(self, im, pch_size, stride, sf=1, extra_bs=1):
         '''
         Input:
-            im: n x c x h x w, torch tensor, float, low-resolution image in SR
-            pch_size, stride: patch setting
-            sf: scale factor in image super-resolution
-            pch_bs: aggregate pchs to processing, only used when inputing single image
+            im: Tensor PyTorch với kích thước [b, c, h, w], RGB
+            pch_size: Kích thước tối đa cho từng phần nhỏ.
+            stride, Bước di chuyển khi chia ảnh.
+            sf: Scale factor (hệ số phóng đại của mô hình siêu phân giải).
+            pch_bs: Batch size bổ sung để xử lý các phần nhỏ
         '''
         assert stride <= pch_size
         self.stride = stride

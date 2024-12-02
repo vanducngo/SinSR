@@ -6,9 +6,9 @@ import torch as th
 import torch.nn.functional as F
 
 from .basic_ops import mean_flat
-from .losses import normal_kl, discretized_gaussian_log_likelihood
+from .losses import normal_kl
 
-from ldm.models.autoencoder import AutoencoderKLTorch
+# from ldm.models.autoencoder import AutoencoderKLTorch
 
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps, beta_start, beta_end):
     """

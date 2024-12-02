@@ -168,22 +168,36 @@ class Sampler(BaseSampler):
         return results.clamp_(-1.0, 1.0)
 
     
-    def inference(self, in_path, out_path, bs=1, noise_repeat=False, one_step=False, return_tensor=False, apply_decoder=True):
+    def inference(self, in_path, out_path, one_step=False, return_tensor=False, apply_decoder=True):
         '''
-        Inference demo.
+        suy luận (inference), áp dụng mô hình SinSR để xử lý ảnh suy giảm (low-quality image, LQ) 
+        và tạo ra ảnh siêu phân giải (super-resolution image, SR).
+        
         Input:
-            in_path: str, folder or image path for LQ image
-            out_path: str, folder save the results
-            bs: int, default bs=1, bs % num_gpus == 0
+            in_path: Đường dẫn đến ảnh đầu vào (ảnh suy giảm) 
+            out_path: Đường dẫn thư mục lưu kết quả đầu ra (ảnh siêu phân giải).
+            bs: Batch size (số lượng ảnh xử lý cùng lúc).
         '''
         def _process_per_image(im_lq_tensor):
             '''
+            Ap dụng mô hình đã được huấn luyện lên một ảnh suy giảm để tạo ra ảnh siêu phân giải.
+
             Input:
-                im_lq_tensor: b x c x h x w, torch tensor, [0,1], RGB
+                im_lq_tensor: Tensor PyTorch với kích thước [b, c, h, w], RGB
+                    b: Batch size (số lượng ảnh trong batch, trường hợp này là 1).
+                    c: Số lượng kênh (3 đối với ảnh RGB).
+                    h: Chiều cao của ảnh.
+                    w: Chiều rộng của ảnh.
+                Dải giá trị: [0, 1].
+
             Output:
-                im_sr: h x w x c, numpy array, [0,1], RGB
+                im_sr: Tensor PyTorch, [1, c, h, w] (1 ảnh siêu phân giải), RGB
+                Dải giá trị: [0, 1].
             '''
 
+            # Kiểm tra xem chiều cao (h) hoặc chiều rộng (w) của ảnh có lớn hơn chop_size không
+            # Nếu ảnh lớn hơn, nó sẽ được chia thành các phần nhỏ để xử lý. 
+            # Điều này đảm bảo rằng ảnh có thể được xử lý trong bộ nhớ GPU hạn chế.
             if im_lq_tensor.shape[2] > self.chop_size or im_lq_tensor.shape[3] > self.chop_size:
                 im_spliter = ImageSpliterTh(
                         im_lq_tensor,
@@ -192,23 +206,31 @@ class Sampler(BaseSampler):
                         sf=self.sf,
                         extra_bs=self.chop_bs,  
                         )
+                
+                # Mỗi phần nhỏ im_lq_pch được xử lý riêng lẻ thông qua hàm self.sample_func.
                 for im_lq_pch, index_infos in im_spliter:
-                    # print(im_lq_pch.shape)
+                    # Thực hiện suy luận (inference) với mô hình khuếch tán (diffusion model).
+                    # Dự đoán ảnh siêu phân giải từ ảnh suy giảm.
+                    # kết quả: im_sr_pch => Tensor siêu phân giải 
                     im_sr_pch = self.sample_func(
-                            (im_lq_pch - 0.5) / 0.5,
-                            noise_repeat=noise_repeat, one_step=one_step, apply_decoder=apply_decoder
+                            (im_lq_pch - 0.5) / 0.5, # Tiền xử lý: Chuẩn hóa tensor từ [0, 1] sang [-1, 1].
+                            noise_repeat=False, one_step=one_step, apply_decoder=apply_decoder
                             )     # 1 x c x h x w, [-1, 1]
+                    # Lưu trữ kết quả của từng phần nhỏ.
                     im_spliter.update(im_sr_pch.detach(), index_infos)
-                    
+                
+                # Kết hợp các phần nhỏ thành ảnh hoàn chỉnh:
                 im_sr_tensor = im_spliter.gather()
             else:
                 im_sr_tensor = self.sample_func(
                         (im_lq_tensor - 0.5) / 0.5,
-                        noise_repeat=noise_repeat, one_step=one_step, apply_decoder=apply_decoder
+                        noise_repeat=False, one_step=one_step, apply_decoder=apply_decoder
                         )     # 1 x c x h x w, [-1, 1]
 
             if apply_decoder:
+                # Chuyển giá trị từ dải [-1, 1] về [0, 1].
                 im_sr_tensor = im_sr_tensor * 0.5 + 0.5
+
             return im_sr_tensor
 
         in_path = Path(in_path) if not isinstance(in_path, Path) else in_path
@@ -217,64 +239,35 @@ class Sampler(BaseSampler):
             out_path.mkdir(parents=True)
         
         return_res = {}
-        if bs > 1:
-            assert in_path.is_dir(), "Input path must be folder when batch size is larger than 1."
+        if not in_path.is_dir():
+            # Đọc ảnh low quality từ in_path, chuyển ảnh sang dạng ma trận kích thước [h, w, c] (chiều cao, chiều rộng, số kênh màu).
+            im_lq = util_image.imread(in_path, chn='rgb', dtype='float32')  # h x w x c
+            # Chuyển ảnh low quality sang tensor
+            im_lq_tensor = util_image.img2tensor(im_lq).cuda()              # 1 x c x h x w
 
-            data_config = {'type': 'folder',
-                           'params': {'dir_path': str(in_path),
-                                      'transform_type': 'default',
-                                      'transform_kwargs': {
-                                          'mean': 0.0,
-                                          'std': 1.0,
-                                          },
-                                      'need_path': True,
-                                      'recursive': True,
-                                      'length': None,
-                                      }
-                           }
-            dataset = create_dataset(data_config)
-            self.write_log(f'Find {len(dataset)} images in {in_path}')
-            dataloader = torch.utils.data.DataLoader(
-                    dataset,
-                    batch_size=bs,
-                    shuffle=False,
-                    drop_last=False,
-                    )
-            for micro_data in dataloader:
-                results = _process_per_image(micro_data['lq'].cuda())    # b x h x w x c, [0, 1], RGB
-                for jj in range(results.shape[0]):
-                    im_sr = util_image.tensor2img(results[jj], rgb2bgr=True, min_max=(0.0, 1.0))
-                    im_name = Path(micro_data['path'][jj]).stem
-                    im_path = out_path / f"{im_name}.png"
-                    util_image.imwrite(im_sr, im_path, chn='bgr', dtype_in='uint8')
-                    if return_tensor:
-                        return_res[im_path.stem]=results[jj]
-                        
-        else:
-            if not in_path.is_dir():
-                im_lq = util_image.imread(in_path, chn='rgb', dtype='float32')  # h x w x c
-                im_lq_tensor = util_image.img2tensor(im_lq).cuda()              # 1 x c x h x w
-                im_sr_tensor = _process_per_image(im_lq_tensor)
-                im_sr = util_image.tensor2img(im_sr_tensor, rgb2bgr=True, min_max=(0.0, 1.0))
+            # Trả về tensor đầu ra là ảnh super-resolution với kích thước [1, c, h, w]
+            im_sr_tensor = _process_per_image(im_lq_tensor)
+            # Chuyển tensor SR về ảnh
+            im_sr = util_image.tensor2img(im_sr_tensor, rgb2bgr=True, min_max=(0.0, 1.0))
 
-                im_path = out_path / f"{in_path.stem}.png"
-                util_image.imwrite(im_sr, im_path, chn='bgr', dtype_in='uint8')
-                if return_tensor:
-                    return_res[im_path.stem]=im_sr_tensor
-            else:
-                im_path_list = [x for x in in_path.glob("*.[jpJP][pnPN]*[gG]")]
-                self.write_log(f'Find {len(im_path_list)} images in {in_path}')
+            im_path = out_path / f"{in_path.stem}.png"
+            util_image.imwrite(im_sr, im_path, chn='bgr', dtype_in='uint8')
+            if return_tensor:
+                return_res[im_path.stem]=im_sr_tensor
+        # else:
+        #     im_path_list = [x for x in in_path.glob("*.[jpJP][pnPN]*[gG]")]
+        #     self.write_log(f'Find {len(im_path_list)} images in {in_path}')
 
-                for im_path in im_path_list:
-                    im_lq = util_image.imread(im_path, chn='rgb', dtype='float32')  # h x w x c
-                    im_lq_tensor = util_image.img2tensor(im_lq).cuda()              # 1 x c x h x w
-                    im_sr_tensor = _process_per_image(im_lq_tensor)
-                    im_sr = util_image.tensor2img(im_sr_tensor, rgb2bgr=True, min_max=(0.0, 1.0))
+        #     for im_path in im_path_list:
+        #         im_lq = util_image.imread(im_path, chn='rgb', dtype='float32')  # h x w x c
+        #         im_lq_tensor = util_image.img2tensor(im_lq).cuda()              # 1 x c x h x w
+        #         im_sr_tensor = _process_per_image(im_lq_tensor)
+        #         im_sr = util_image.tensor2img(im_sr_tensor, rgb2bgr=True, min_max=(0.0, 1.0))
 
-                    im_path = out_path / f"{im_path.stem}.png"
-                    util_image.imwrite(im_sr, im_path, chn='bgr', dtype_in='uint8')
-                    if return_tensor:
-                        return_res[im_path.stem]=im_sr_tensor
+        #         im_path = out_path / f"{im_path.stem}.png"
+        #         util_image.imwrite(im_sr, im_path, chn='bgr', dtype_in='uint8')
+        #         if return_tensor:
+        #             return_res[im_path.stem]=im_sr_tensor
 
         self.write_log(f"Processing done, enjoy the results in {str(out_path)}")
         return return_res

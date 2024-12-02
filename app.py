@@ -34,6 +34,7 @@ def get_configs(model, colab):
     if model == 'SinSR':
         ckpt_path = ckpt_dir / f'SinSR_v1.pth'
         if not ckpt_path.exists():
+            print("Chưa có checkpoint trong SinSR => Download về")
             load_file_from_url(
                 url=f"https://github.com/wyf0912/SinSR/releases/download/v1.0/{ckpt_path.name}",
                 model_dir=ckpt_dir,
@@ -43,6 +44,7 @@ def get_configs(model, colab):
     elif model == 'ResShift':
         ckpt_path = ckpt_dir / f'resshift_{task}_s15_v1.pth'
         if not ckpt_path.exists():
+            print("Chưa có checkpoint trong ResShift => Download về")
             load_file_from_url(
                 url=f"https://github.com/zsyOAOA/ResShift/releases/download/v2.0/{ckpt_path.name}",
                 model_dir=ckpt_dir,
@@ -66,7 +68,7 @@ def get_configs(model, colab):
 
     return configs
 
-def predict(in_path, single_step, colab = True, model='SinSR', seed=12345):
+def predict(in_path, colab = True, model='SinSR', seed=12345):
     configs = get_configs(model, colab)
     if sampler_dict[model] is None:
         sampler_dict[model] = Sampler(
@@ -77,14 +79,20 @@ def predict(in_path, single_step, colab = True, model='SinSR', seed=12345):
             use_fp16=True,
             seed=seed,
         )
+    
     sampler = sampler_dict[model]
     
     out_dir = Path('restored_output')
     if not out_dir.exists():
         out_dir.mkdir()
     
-    if model=="SinSR": single_step = True
-    sampler.inference(in_path, out_dir, bs=1, noise_repeat=False, one_step=single_step)
+    if model=="SinSR": 
+        single_step = True
+    else:
+        single_step = False
+
+    # suy luận (inference) bằng cách sử dụng mô hình đã huấn luyện trong SinSR
+    sampler.inference(in_path, out_dir, one_step=single_step)
 
     out_path = out_dir / f"{Path(in_path).stem}.png"
     assert out_path.exists(), 'Super-resolution failed!'
@@ -102,30 +110,8 @@ if __name__ == "__main__":
     sampler_dict = {"SinSR": None, "ResShift": None} 
 
     title = "SinSR: Diffusion-Based Image Super-Resolution in a Single Step"
-    description = r"""
-    <b>Official Gradio demo</b> for <a href='https://github.com/wyf0912/SinSR' target='_blank'><b>SinSR: Diffusion-Based Image Super-Resolution in a Single Step</b></a>.<br>
-    🔥 SinSR is an efficient diffusion model designed for image super-resolution in a single diffusion step.<br>
-    """
-    article = r"""
-    If SinSR is helpful for your work, please help to ⭐ the <a href='https://github.com/wyf0912/SinSR' target='_blank'>Github Repo</a>. Thanks!
-    [![GitHub Stars](https://img.shields.io/github/stars/wyf0912/SinSR?affiliations=OWNER&color=green&style=social)](https://github.com/wyf0912/SinSR)
-
-    ---
-    If our work is useful for your research, please consider citing:
-    ```bibtex
-    @article{wang2023sinsr,
-      title={SinSR: Diffusion-Based Image Super-Resolution in a Single Step},
-      author={Wang, Yufei and Yang, Wenhan and Chen, Xinyuan and Wang, Yaohui and Guo, Lanqing and Chau, Lap-Pui and Liu, Ziwei and Qiao, Yu and Kot, Alex C and Wen, Bihan},
-      journal={arXiv preprint arXiv:2311.14760},
-      year={2023}
-    }
-    ```
-
-    📧 **Contact**
-
-    If you have any questions, please feel free to contact me via <b>yufei001@ntu.edu.sg</b>.
-    ![visitors](https://visitor-badge.laobi.icu/badge?page_id=wyf0912/SinSR)
-    """
+    description = ""
+    article = ''
     
 
     if args.colab:
@@ -145,7 +131,7 @@ if __name__ == "__main__":
         fn=predict,
         inputs=[
             gr.Image(type="filepath", label="Input: Low Quality Image"),
-            gr.Checkbox(label="Single diffusion step", value=True),
+            # gr.Checkbox(label="Single diffusion step", value=True),
             gr.Checkbox(label="Using colab?", value = True),
             gr.Dropdown(
                 choices=["SinSR", "ResShift"],
