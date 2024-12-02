@@ -16,12 +16,12 @@ def get_configs(model, colab):
     configs = None
     if model == 'SinSR':
         if colab:
-            configs = OmegaConf.load('/content/drive/MyDrive/SinSR/configs/SinSR.yaml')
+            configs = OmegaConf.load('/content/SinSR/configs/SinSR.yaml')
         else:
             configs = OmegaConf.load('./configs/SinSR.yaml')
     elif model == 'ResShift':
         if colab:
-            configs = OmegaConf.load('/content/drive/MyDrive/SinSR/configs/realsr_swinunet_realesrgan256.yaml')
+            configs = OmegaConf.load('/content/SinSR/configs/realsr_swinunet_realesrgan256.yaml')
         else:
             configs = OmegaConf.load('./configs/realsr_swinunet_realesrgan256.yaml')
         task = "realsrx4"
@@ -116,9 +116,9 @@ if __name__ == "__main__":
 
     if args.colab:
         examples=[
-            ['/content/drive/MyDrive/SinSR/testdata/RealSet65/dog2.png', True, "SinSR", 12345],
-            ['/content/drive/MyDrive/SinSR/testdata/RealSet65/bears.jpg', True, "SinSR", 12345],
-            ['/content/drive/MyDrive/SinSR/testdata/RealSet65/oldphoto6.png', True, "SinSR", 12345],
+            ['/content/SinSR/testdata/RealSet65/dog2.png', True, "SinSR", 12345],
+            ['/content/SinSR/testdata/RealSet65/bears.jpg', True, "SinSR", 12345],
+            ['/content/SinSR/testdata/RealSet65/oldphoto6.png', True, "SinSR", 12345],
           ]
     else:
         examples=[

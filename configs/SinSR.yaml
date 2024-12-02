@@ -1,7 +1,7 @@
 model:
   target: models.unet.UNetModelSwin
   ckpt_path: ~
-  teacher_ckpt_path: /content/drive/MyDrive/SinSR/weights/resshift_realsrx4_s15_v1.pth
+  teacher_ckpt_path: /content/SinSR/weights/resshift_realsrx4_s15_v1.pth
   params:
     image_size: 64
     in_channels: 6
@@ -43,7 +43,7 @@ diffusion:
 
 autoencoder:
   target: ldm.models.autoencoder.VQModelTorch
-  ckpt_path: /content/drive/MyDrive/SinSR/weights/autoencoder_vq_f4.pth
+  ckpt_path: /content/SinSR/weights/autoencoder_vq_f4.pth
   use_fp16: True
   params:
     embed_dim: 3
@@ -96,8 +96,8 @@ data:
     params:
       dir_paths: []
       txt_file_path: [
-                      '/content/drive/MyDrive/SinSR/traindata/train.txt', 
-                      '/content/drive/MyDrive/SinSR/traindata/ffhq256.txt',
+                      '/content/SinSR/traindata/train.txt', 
+                      '/content/SinSR/traindata/ffhq256.txt',
                      ] 
       im_exts: ['JPEG', ]
       io_backend:
@@ -128,7 +128,7 @@ data:
   val:
     type: folder
     params:
-      dir_path: /content/drive/MyDrive/SinSR/testdata/RealSet128/
+      dir_path: /content/SinSR/testdata/RealSet128/
       dir_path_extra: ~
       transform_type: default
       transform_kwargs:
