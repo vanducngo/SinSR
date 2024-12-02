@@ -109,18 +109,22 @@ class RealESRGANDataset(data.Dataset):
         gt_path = self.paths[index]
         # avoid errors caused by high latency in reading files
         retry = 3
+        img_gt = None
         while retry > 0:
             try:
                 img_bytes = self.file_client.get(gt_path, 'gt')
                 img_gt = imfrombytes(img_bytes, float32=True)
+                print("Print thu print(img_gt)")
+                print(img_gt)
             # except (IOError, OSError, AttributeError) as e:
-            except:
+            except Exception as e:
                 # logger = get_root_logger()
                 # logger.warn(f'File client error: {e}, remaining retry times: {retry - 1}')
                 # change another file to read
                 index = random.randint(0, self.__len__())
                 gt_path = self.paths[index]
                 time.sleep(1)  # sleep 1s for occasional server congestion
+                print(f"Print thu print(img_gt) => Exception: {e}")
             # else:
                 # break
             finally:
@@ -140,7 +144,7 @@ class RealESRGANDataset(data.Dataset):
         if self.mode == 'training':
             # -------------------- Do augmentation for training: flip, rotation -------------------- #
             img_gt = augment(img_gt, self.opt['use_hflip'], self.opt['use_rot'])
-
+            print(f'Trying to log the value img_gt: {img_gt}')
             # crop or pad to 400
             # TODO: 400 is hard-coded. You may change it accordingly
             h, w = img_gt.shape[0:2]

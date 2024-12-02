@@ -688,20 +688,46 @@ class GaussianDiffusion:
                 z_sample = z_sample.type(next(first_stage_model.parameters()).dtype)
                 out = first_stage_model.decode(z_sample, grad_forward=True)
             return out.type(ori_dtype)
-        
+    
+    """
+    đầu ra
+        + Nếu first_stage_model=None:
+            Trả về dữ liệu đầu vào y mà không qua mã hóa.
+        + Nếu first_stage_model được cung cấp:
+            Trả về dữ liệu đã mã hóa (z_y), đã được điều chỉnh bởi scale_factor.
+    """
     def encode_first_stage(self, y, first_stage_model, up_sample=False):
         ori_dtype = y.dtype
         if up_sample:
+            # Tăng kích thước lên theo tỷ lệ (scale_factor) bằng phương pháp nội suy bicubic.
             y = F.interpolate(y, scale_factor=self.sf, mode='bicubic')
+        
         if first_stage_model is None:
             return y
         else:
+            # Xử lý mã hóa với mô hình autoencoder
+
+            # th.no_grad(): Vô hiệu hóa tính toán gradient để tiết kiệm bộ nhớ
             with th.no_grad():
+                # Điều chỉnh kiểu dữ liệu của y sao cho khớp với kiểu dữ liệu của các tham số trong first_stage_model.
                 y = y.type(dtype=next(first_stage_model.parameters()).dtype)
+                # Mã hóa dữ liệu y từ không gian đầu vào sang không gian tiềm ẩn, kết quả là z_y.
                 z_y = first_stage_model.encode(y)
+                # Điều chỉnh giá trị của dữ liệu mã hóa bằng cách nhân với scale_factor.
                 out = z_y * self.scale_factor
+                # Trả về dữ liệu đã mã hóa với kiểu dữ liệu gốc (ori_dtype).
                 return out.type(ori_dtype)
 
+    """
+    Đầu vào: 
+        + y: Dữ liệu suy giảm.
+        + ϵ: Nhiễu Gaussian (tuỳ chọn, nếu không có sẽ được sinh tự động).
+    
+    Đầu ra: 
+        + xT: Dữ liệu bị nhiễu mạnh nhất tại bước cuối cùng T
+
+    Mục đích: Sinh dữ liệu đầu vào bị nhiễu mạnh để khởi tạo quá trình huấn luyện hoặc suy luận ngược (reverse diffusion).
+    """
     def prior_sample(self, y, noise=None):
         """
         Generate samples from the prior distribution, i.e., q(x_T|x_0) ~= N(x_T|y, ~)
@@ -709,38 +735,70 @@ class GaussianDiffusion:
         :param y: the [N x C x ...] tensor of degraded inputs.
         :param noise: the [N x C x ...] tensor of degraded inputs.
         """
+
+        # Sinh nhiễu Gaussian nếu không được cung cấp
         if noise is None:
             noise = th.randn_like(y)
 
+        # Thời điểm khuếch tán t được đặt ở bước cuối cùng của quá trình khuếch tán (𝑡 =𝑇)
+        # self.num_timesteps - 1: Tổng số bước khuếch tán trừ 1, tương ứng với bước cuối cùng.
         t = th.tensor([self.num_timesteps-1,] * y.shape[0], device=y.device).long()
 
+        # xT =y + κ*sqrt(ηs) * ϵ)
+        #   y: Ảnh bị suy giảm (degraded input), được coi là trung tâm của phân phối prior.
+        #   ϵ: Nhiễu Gaussian ngẫu nhiên (nếu không được cung cấp, sẽ được sinh ra).
+        #   κ*sqrt(ηs): Hệ số điều chỉnh phương sai của nhiễu tại thời điểm t = T
         return y + _extract_into_tensor(self.kappa * self.sqrt_etas, t, y.shape) * noise
 
+    """
+    * Hàm training_losses_distill tính toán giá trị mất mát để:
+            + Huấn luyện mô hình học sinh (student model):
+                + Mô hình học sinh học cách tái tạo đầu ra giống với mô hình giáo viên.
+                + Hoặc học cách dự đoán kết quả gần đúng với dữ liệu gốc (ground truth).
+            + Truyền tri thức (Knowledge Distillation)
+                + Truyền tri thức từ mô hình giáo viên sang mô hình học sinh.
+                + Sử dụng phương pháp khuếch tán (diffusion) để dự đoán ảnh có độ phân giải cao.
+        => Huấn luyện mô hình học sinh thông qua distillation, sao cho nó tái tạo được đầu ra chính xác nhất từ dữ liệu nhiễu hoặc suy giảm.
+    
+    * Step:
+    -> Chuẩn bị dữ liệu: Xử lý ảnh đầu vào, thêm nhiễu, và chuyển đổi sang không gian tiềm ẩn.
+    -> Lấy mục tiêu: Sử dụng đầu ra từ mô hình giáo viên hoặc ground truth.
+    -> Tính toán mất mát: So sánh đầu ra của mô hình học sinh với mục tiêu.
+    -> Hỗ trợ tùy chọn nâng cao: Hỗ trợ học xT, tinh chỉnh bằng ground truth
+
+
+    * Đầu vào:
+        + model: Mô hình học sinh đang được huấn luyện.
+        + teacher_model: Mô hình giáo viên được sử dụng để sinh đầu ra làm mục tiêu (target).
+        + x_start: Ảnh gốc
+        + y: Ảnh bị suy giảm
+        + t: Thời điểm khuếch tán (timesteps), kích thước [N].
+        + first_stage_model: Mô hình autoencoder để mã hóa và giải mã không gian tiềm ẩn.
+        + noise: Nhiễu Gaussian được thêm vào dữ liệu, kích thước giống z_y. Nếu không có, sẽ được tạo ngẫu nhiên.
+        + learn_xT: Cho phép mô hình học cách dự đoán trạng thái nhiễu ban đầu xT.
+        + finetune_use_gt: Dùng ground truth thay vì mô hình giáo viên để làm mục tiêu huấn luyện.
+
+    * Đầu ra: 
+        + term: Dictionary chứa các giá trị mất mát và các thành phần liên quan, ví dụ:
+            + terms["loss"]: Tổng giá trị mất mát.
+            + terms["loss_xT"]: Mất mát liên quan đến trạng thái nhiễu xT.
+            + terms["loss_gt"]: Mất mát so với ground truth.
+        + z_t: Dữ liệu đầu vào bị nhiễu tại thời điểm t, sau khi thêm noise.
+        + pred_zstart: Dự đoán cuối cùng từ mô hình học sinh, có thể là:
+            + z_start (dự đoán trực tiếp từ mô hình giáo viên hoặc ground truth).
+            + xT (trạng thái ban đầu của nhiễu, nếu tùy chọn learn_xT được bật).
+    """
     def training_losses_distill(
             self, model, teacher_model, x_start, y, t,
             first_stage_model=None,
             model_kwargs=None,
             noise=None, distill_ddpm=False, uncertainty_hyper=False, uncertainty_num_aux=2, learn_xT=False, finetune_use_gt=False, xT_cov_loss=False, reformulated_reflow=False, loss_in_image_space=False
             ):
-        """
-        Compute training losses for a single timestep.
-
-        :param model: the model to evaluate loss on.
-        :param first_stage_model: autoencoder model
-        :param x_start: the [N x C x ...] tensor of inputs.
-        :param y: the [N x C x ...] tensor of degraded inputs.
-        :param t: a batch of timestep indices.
-        :param model_kwargs: if not None, a dict of extra keyword arguments to
-            pass to the model. This can be used for conditioning.
-        :param noise: if specified, the specific Gaussian noise to try to remove.
-        :return: a dict with the key "loss" containing a tensor of shape [N].
-                 Some mean or variance settings may also have other keys.
-                 
-        :finetune_use_gt: do not use teacher model, instead only use the groud-truth and its inverse
-        """
+        
         if model_kwargs is None:
             model_kwargs = {}
             
+        # Tạo dữ liệu đầu vào cho quá trình khuếch tán (diffusion).
         z_y = self.encode_first_stage(y, first_stage_model, up_sample=True) # TODO can be eliminated to speed up, since z_y is already obtained in self.ddim_sample_loop/p_sample_loop
         if noise is None:
             noise = th.randn_like(z_y)
@@ -749,108 +807,98 @@ class GaussianDiffusion:
         loss_type = "mse" # "mse"
         assert loss_type in ["mse", "mae"]
         terms["loss"] = 0
+        
+        # z_t: Dữ liệu đầu vào nhiễu, lấy mẫu từ quá trình khuếch tán.
         z_t = self.prior_sample(z_y, noise)
+        
+        # pred_zstart: Dự đoán cuối cùng từ mô hình học sinh.
         pred_zstart = None
+        
         # if not finetune_use_gt:
         if True:
             # obtain *z_start_teacher*, i.e., x_0 predicted from x_T
-            if distill_ddpm:
-                z_start_teacher = self.p_sample_loop(y, teacher_model, first_stage_model, noise, clip_denoised=True if first_stage_model is None else False, apply_decoder=False, model_kwargs=model_kwargs)["sample"]
-            else:
-                z_start_teacher = self.ddim_sample_loop(y, teacher_model, noise, first_stage_model, clip_denoised=True if first_stage_model is None else False, apply_decoder=False, model_kwargs=model_kwargs)["sample"]
+            # Lấy đầu ra của mô hình giáo viên để làm mục tiêu huấn luyện.
+            # sử dụng phương pháp DDIM (Denoising Diffusion Implicit Model)
+            # Trả về một dự đoán của trạng thái đầu tiên (ảnh gốc hoặc phiên bản sạch) 
+            # được mô hình giáo viên tái tạo từ dữ liệu đầu vào bị suy giảm y và nhiễu ϵ
+            # => lấy mẫu ngược (reverse sampling) từ xT -> x0
+            z_start_teacher = self.ddim_sample_loop(y, teacher_model, noise, first_stage_model, clip_denoised=True if first_stage_model is None else False, apply_decoder=False, model_kwargs=model_kwargs)["sample"]
 
-            # z_t = self.q_sample(z_start_teacher, z_y, t, noise=noise)
-            if self.loss_type == LossType.MSE or self.loss_type == LossType.WEIGHTED_MSE:
+            # LossType là MSE
+            if self.loss_type == LossType.MSE:
+                # Dự đoán đầu ra từ mô hình học sinh
                 model_output = model(self._scale_input(z_t, t), t, **model_kwargs)
-                if uncertainty_hyper:
-                    with th.no_grad():
-                        # model.eval()
-                        # first_stage_model.eval()
-                        model_output_aux_list = []
-                        for _ in range(uncertainty_num_aux):
-                            z_t_aux = self.q_sample(z_start_teacher, z_y, t, noise=th.randn_like(z_y))
-                            model_output_aux_list.append(model(self._scale_input(z_t_aux, t), t, **model_kwargs))
-                        model_output_aux = th.stack(model_output_aux_list, dim=0)
-                        uncertainty = (model_output_aux.max(dim=0)[0]-model_output_aux.min(dim=0)[0]) # B*C*H*W
-                        uncertainty = uncertainty.max(dim=1, keepdim=True)[0]
-                        z_start_gt = self.encode_first_stage(x_start, first_stage_model, up_sample=False) 
-                        
-                        uncertainty = (uncertainty*uncertainty_hyper).clip(0,1)
-                        z_start = z_start_teacher * uncertainty + z_start_gt * (1-uncertainty) 
-                else:
-                    z_start = z_start_teacher
-                    
+                
+                z_start = z_start_teacher
+
+                # Mục tiêu cho mô hình học sinh
                 target = {
-                    ModelMeanType.START_X: z_start,
-                    ModelMeanType.RESIDUAL: z_y - z_start,
-                    ModelMeanType.EPSILON: noise,
+                    ModelMeanType.START_X: z_start, # Đầu ra từ Mô hình giáo viên
+                    ModelMeanType.RESIDUAL: z_y - z_start, # Hiệu giữa đầu vào nhiễu và đầu ra.
+                    ModelMeanType.EPSILON: noise, # Nhiễu gốc.
+                    # EPSILON_SCALE: Nhiễu gốc được nhân với trọng số.
                     ModelMeanType.EPSILON_SCALE: noise*self.kappa*_extract_into_tensor(self.sqrt_etas, t, noise.shape),
                 }[self.model_mean_type]
+
                 assert model_output.shape == target.shape   
 
-                if loss_in_image_space:
-                     assert self.model_mean_type == ModelMeanType.START_X
-                     model_output_rgb = self.decode_first_stage(model_output, first_stage_model, no_grad=False)
-                     target = self.decode_first_stage(z_start, first_stage_model)
-                     terms[loss_type] = mean_flat((target - model_output_rgb) ** 2 if loss_type=="mse" else (target - model_output_rgb).abs()) 
-                else:
-                    terms[loss_type] = mean_flat((target - model_output) ** 2 if loss_type=="mse" else (target - model_output).abs())            
+                # Mất mát giữa đầu ra của mô hình học sinh và mục tiêu (target).
+                # MSE
+                terms[loss_type] = mean_flat((target - model_output) ** 2)
+                
                 if self.model_mean_type == ModelMeanType.EPSILON_SCALE:
                     terms[loss_type] /= (self.kappa**2 * _extract_into_tensor(self.etas, t, t.shape))
                 if self.loss_type == LossType.WEIGHTED_MSE:
                     weights = _extract_into_tensor(self.weight_loss_mse, t, t.shape)
                 else:
                     weights = 1
+                
+                # Tổng giá trị mất mát.
                 terms["loss"] += terms[loss_type] * weights
                 
+                # Config true from SinSR
                 if learn_xT:
+                    # Mô hình học sinh sẽ học cách dự đoán trạng thái nhiễu xT (trạng thái bị nhiễu mạnh nhất)
+                    # z_start_teacher: Z-start được dự đoán từ mô hình giáo viên.
                     predicted_xT = model(self._scale_input(z_start_teacher, t), t*0, **model_kwargs) # TODO scale_input有必要吗？
-                    terms[loss_type+"_xT"] = mean_flat((z_t - predicted_xT) ** 2 if loss_type=="mse" else (z_t - predicted_xT).abs())
+                    terms[loss_type+"_xT"] = mean_flat((z_t - predicted_xT) ** 2) # MSE
                     terms["loss"] += terms[loss_type+"_xT"]   
                      
             else:
                 raise NotImplementedError(self.loss_type)
-            if self.model_mean_type == ModelMeanType.START_X:      # predict x_0
-                pred_zstart = model_output.detach()
-            elif self.model_mean_type == ModelMeanType.EPSILON:
-                pred_zstart = self._predict_xstart_from_eps(x_t=z_t, y=z_y, t=t, eps=model_output.detach())
-            elif self.model_mean_type == ModelMeanType.RESIDUAL:
-                pred_zstart = self._predict_xstart_from_residual(y=z_y, residual=model_output.detach())
-            elif self.model_mean_type == ModelMeanType.EPSILON_SCALE:
-                pred_zstart = self._predict_xstart_from_eps_scale(x_t=z_t, y=z_y, t=t, eps=model_output.detach())
-            else:
-                raise NotImplementedError(self.model_mean_type)     
+            
+            # detach() tạo ra một tensor mới với cùng dữ liệu như model_output, 
+            # nhưng không liên kết với đồ thị tính toán gradient.
+            pred_zstart = model_output.detach()
                
+        # Sử dụng ground truth để huấn luyện
+        #  Mô hình học sinh sẽ học cách dự đoán trạng thái x0  hoặc 𝑧_start trực tiếp từ ground truth 𝑥_start, 
+        # thay vì hoàn toàn dựa vào mô hình giáo viên.
+        # Điều này giúp cải thiện khả năng tổng quát của mô hình học sinh bằng cách bổ sung thông tin từ dữ liệu thực.
         if finetune_use_gt:
+            # Chuẩn bị dữ liệu ground truth để làm mục tiêu trực tiếp cho quá trình huấn luyện.
             z_start_gt=self.encode_first_stage(x_start, first_stage_model, up_sample=False)
 
-            if not xT_cov_loss:
-                with th.no_grad():
-                    predicted_xT_from_gt = model(self._scale_input(z_start_gt, t), t*0, **model_kwargs)
-                    
-                    xT_std_align = False
-                    
-                    if xT_std_align:
-                        noise_gt_pred = predicted_xT_from_gt-z_y
-                        sampled_noise = z_t-z_y
-                        noise_gt_new=noise_gt_pred/noise_gt_pred.std()*sampled_noise.std()
-                        predicted_xT_from_gt=z_y+noise_gt_new
-            else:
+            # th.no_grad(): Vô hiệu hóa tính toán gradient để tiết kiệm bộ nhớ
+            with th.no_grad():
+                # Dự đoán trạng thái nhiễu xT từ trạng thái gốc z_start_gt
+                # t*0 => T = 0 => Trạng thái gốc.
                 predicted_xT_from_gt = model(self._scale_input(z_start_gt, t), t*0, **model_kwargs)
-                noise_gt_pred = predicted_xT_from_gt-z_y.detach()
-                terms["mse_xT_cov"] = self.cov_loss(noise_gt_pred)
-                terms["loss"] += (terms["mse_xT_cov"]*xT_cov_loss)
             
+            # predicted_xT_from_gt.detach(): Tách trạng thái dự đoán xT ra khỏi đồ thị gradient.
+            # đảm bảo không làm ảnh hưởng đến gradient của các bước trước.
+            # Đầu ra của mô hình học sinh, dự đoán trạng thái gốc zStart dựa trên Ground truth
             model_output_pedict_gt = model(self._scale_input(predicted_xT_from_gt.detach(), t), t, **model_kwargs)
-            if not loss_in_image_space: 
-                terms[loss_type+"_gt"] = mean_flat((z_start_gt - model_output_pedict_gt) ** 2 if loss_type=="mse" else (z_start_gt - model_output_pedict_gt).abs())
-                terms["loss"] += (terms[loss_type+"_gt"]*finetune_use_gt)
-            else:
-                model_output_pedict_gt_rgb = self.decode_first_stage(model_output_pedict_gt, first_stage_model, no_grad=False) # after decode range from -1 to 1
-                terms[loss_type+"_gt_rgb"] = mean_flat((x_start - model_output_pedict_gt_rgb) ** 2 if loss_type=="mse" else (x_start - model_output_pedict_gt_rgb).abs())
-                terms["loss"] += (terms[loss_type+"_gt_rgb"]*finetune_use_gt)
+            
+            # Mất mát: So sánh giữa trạng thái gốc z_start_gt và đầu ra dự đoán model_output_pedict_gt
+            terms[loss_type+"_gt"] = mean_flat((z_start_gt - model_output_pedict_gt) ** 2) #MSE
+            terms["loss"] += (terms[loss_type+"_gt"]*finetune_use_gt)
             
             if pred_zstart is None: pred_zstart=model_output_pedict_gt
+        
+        #terms: Dictionary chứa các giá trị mất mát khác nhau (e.g., loss, loss_xT, loss_gt).
+        # z_t: Đầu vào nhiễu.
+        # pred_zstart: Dự đoán cuối cùng từ mô hình học sinh.
         return terms, z_t, pred_zstart
         
         

@@ -32,16 +32,10 @@ def create_gaussian_diffusion(
         timestep_respacing = steps
     else:
         assert isinstance(timestep_respacing, int)
-    if predict_type == 'xstart':
-        model_mean_type = gd.ModelMeanType.START_X
-    elif predict_type == 'epsilon':
-        model_mean_type = gd.ModelMeanType.EPSILON
-    elif predict_type == 'epsilon_scale':
-        model_mean_type = gd.ModelMeanType.EPSILON_SCALE
-    elif predict_type == 'residual':
-        model_mean_type = gd.ModelMeanType.RESIDUAL
-    else:
-        raise ValueError(f'Unknown Predicted type: {predict_type}')
+    
+    # Base on the SinSR Config
+    model_mean_type = gd.ModelMeanType.START_X
+
     return SpacedDiffusion(
         use_timesteps=space_timesteps(steps, timestep_respacing),
         sqrt_etas=sqrt_etas,
