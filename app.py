@@ -86,10 +86,7 @@ def predict(in_path, colab = True, model='SinSR', seed=12345):
     if not out_dir.exists():
         out_dir.mkdir()
     
-    if model=="SinSR": 
-        single_step = True
-    else:
-        single_step = False
+    single_step = True
 
     # suy luận (inference) bằng cách sử dụng mô hình đã huấn luyện trong SinSR
     sampler.inference(in_path, out_dir, one_step=single_step)
