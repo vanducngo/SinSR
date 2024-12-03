@@ -487,6 +487,9 @@ class GaussianDiffusion:
             - Trả về các trạng thái trung gian hoặc kết quả cuối cùng (x0).
         """
         
+        if device is None:
+            device = next(model.parameters()).device
+
         # Dữ liệu đầu vào y được mã hóa vào không gian tiềm ẩn
         z_y = self.encode_first_stage(y, first_stage_model, up_sample=True)
 
