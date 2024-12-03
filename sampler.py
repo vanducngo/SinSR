@@ -211,7 +211,7 @@ class Sampler(BaseSampler):
                     # kết quả: im_sr_pch => Tensor siêu phân giải 
                     im_sr_pch = self.sample_func(
                             (im_lq_pch - 0.5) / 0.5, # Tiền xử lý: Chuẩn hóa tensor từ [0, 1] sang [-1, 1].
-                            noise_repeat=False, one_step=one_step, apply_decoder=apply_decoder
+                            one_step=one_step, apply_decoder=apply_decoder
                             )     # 1 x c x h x w, [-1, 1]
                     # Lưu trữ kết quả của từng phần nhỏ.
                     im_spliter.update(im_sr_pch.detach(), index_infos)
@@ -221,7 +221,7 @@ class Sampler(BaseSampler):
             else:
                 im_sr_tensor = self.sample_func(
                         (im_lq_tensor - 0.5) / 0.5,
-                        noise_repeat=False, one_step=one_step, apply_decoder=apply_decoder
+                        one_step=one_step, apply_decoder=apply_decoder
                         )     # 1 x c x h x w, [-1, 1]
 
             if apply_decoder:
