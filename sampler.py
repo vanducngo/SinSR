@@ -110,16 +110,20 @@ class BaseSampler:
         util_net.reload_model(model, state)
 
 class Sampler(BaseSampler):    
-    def sample_func(self, y0, noise_repeat=False, one_step=False, apply_decoder=True):
+    def sample_func(self, y0, one_step=False, apply_decoder=True):
         '''
         Input:
-            y0: n x c x h x w torch tensor, low-quality image, [-1, 1], RGB
+            y0: Ảnh chất lượng thấp, dạng tensor [n,c,h,w], giá trị nằm trong khoảng [−1,1], RGB
+            one_step: Nếu True (SinSR), mô hình thực hiện single-step diffusion (chỉ một bước)
         Output:
-            sample: n x c x h x w, torch tensor, [-1, 1], RGB
+            sample: Ảnh siêu phân giải đầu ra, dạng tensor [n,c,h,w], giá trị nằm trong khoảng [−1,1], RGB
         '''
-        if noise_repeat:
-            self.setup_seed()
 
+        '''
+        Đảm bảo kích thước của ảnh y0 chia hết cho desired_min_size (kích thước tối thiểu yêu cầu).
+        Padding: Nếu ảnh không thỏa mãn điều kiện, padding được thêm vào 
+        (với phương pháp phản xạ, reflect) để mở rộng kích thước ảnh.
+        '''
         desired_min_size = self.desired_min_size
         ori_h, ori_w = y0.shape[2:]
         if not (ori_h % desired_min_size == 0 and ori_w % desired_min_size == 0):
@@ -133,38 +137,32 @@ class Sampler(BaseSampler):
 
         model_kwargs={'lq':y0,} if self.configs.model.params.cond_lq else None
         
-        if not self.ddim:        
-            results = self.base_diffusion.p_sample_loop(
-                    y=y0,
-                    model=self.model,
-                    first_stage_model=self.autoencoder,
-                    noise=None,
-                    noise_repeat=noise_repeat,
-                    clip_denoised=(self.autoencoder is None),
-                    denoised_fn=None,
-                    model_kwargs=model_kwargs,
-                    progress=False,
-                    one_step=one_step,
-                    apply_decoder=apply_decoder
-                    )    # This has included the decoding for latent space
-        else:
-            results = self.base_diffusion.ddim_sample_loop(
-                    y=y0,
-                    model=self.model,
-                    first_stage_model=self.autoencoder,
-                    noise=None,
-                    clip_denoised=(self.autoencoder is None),
-                    denoised_fn=None,
-                    model_kwargs=model_kwargs,
-                    progress=True,
-                    one_step=one_step,
-                    apply_decoder=apply_decoder
-                    )    # This has included the decoding for latent space
+        # p_sample_loop: Đây là quá trình khuếch tán đa bước (multi-step diffusion)
+        # xT =>xT−1 => x0 (giảm nhiễu qua nhiều bước).
+        # Nếu one_step=True, quá trình này chỉ thực hiện một bước duy nhất.
+        results = self.base_diffusion.p_sample_loop(
+                y=y0,
+                model=self.model,
+                first_stage_model=self.autoencoder,
+                noise=None,
+                noise_repeat=False,
+                clip_denoised=(self.autoencoder is None),
+                denoised_fn=None,
+                model_kwargs=model_kwargs,
+                progress=False,
+                one_step=one_step,
+                apply_decoder=apply_decoder
+                )    # This has included the decoding for latent space
+        
         if flag_pad and apply_decoder:
+            # Sau khi quá trình suy luận hoàn tất, nếu ảnh được padding trước đó, phần thừa sẽ được cắt bỏ.
             results = results[:, :, :ori_h*self.sf, :ori_w*self.sf]
             
         if not apply_decoder:
+            # Nếu không giải mã ảnh, trả về kết quả trong không gian tiềm ẩn (pred_xstart).
             return results["pred_xstart"]
+        
+        # Giải mã
         return results.clamp_(-1.0, 1.0)
 
     
@@ -176,7 +174,6 @@ class Sampler(BaseSampler):
         Input:
             in_path: Đường dẫn đến ảnh đầu vào (ảnh suy giảm) 
             out_path: Đường dẫn thư mục lưu kết quả đầu ra (ảnh siêu phân giải).
-            bs: Batch size (số lượng ảnh xử lý cùng lúc).
         '''
         def _process_per_image(im_lq_tensor):
             '''

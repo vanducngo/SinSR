@@ -683,68 +683,16 @@ class TrainerDifIR(TrainerBase):
         else:
             return {key:value.cuda().to(dtype=dtype) for key, value in data.items()}
 
+    '''
+    # Train data với Hàm loss và sử dụng 
+    # Gradient Descent để tối ưu hàm loss
+
+    Thực hiện quá trình truyền dữ liệu qua mô hình, tính toán loss, 
+    tính gradient, và cập nhật các tham số của mô hình
+    '''
+
     def training_step(self, data):
-        current_batchsize = data['gt'].shape[0]
-        micro_batchsize = self.configs.train.microbatch
-        num_grad_accumulate = math.ceil(current_batchsize / micro_batchsize)
-
-        if self.configs.train.use_fp16:
-            scaler = amp.GradScaler()
-
-        self.optimizer.zero_grad()
-        for jj in range(0, current_batchsize, micro_batchsize):
-            micro_data = {key:value[jj:jj+micro_batchsize,] for key, value in data.items()}
-            last_batch = (jj+micro_batchsize >= current_batchsize)
-            tt = torch.randint(
-                    0, self.base_diffusion.num_timesteps,
-                    size=(micro_data['gt'].shape[0],),
-                    device=f"cuda:{self.rank}",
-                    )
-            latent_downsamping_sf = 2**(len(self.configs.autoencoder.params.ddconfig.ch_mult) - 1) if self.configs.autoencoder is not None else 1
-            latent_resolution = micro_data['gt'].shape[-1] // latent_downsamping_sf
-            noise = torch.randn(
-                    size=micro_data['gt'].shape[:2] + (latent_resolution, ) * 2,
-                    device=micro_data['gt'].device,
-                    )
-            model_kwargs={'lq':micro_data['lq'],} if self.configs.model.params.cond_lq else None
-            compute_losses = functools.partial(
-                self.base_diffusion.training_losses,
-                self.model,
-                micro_data['gt'],
-                micro_data['lq'],
-                tt,
-                first_stage_model=self.autoencoder,
-                model_kwargs=model_kwargs,
-                noise=noise,
-            )
-            if self.configs.train.use_fp16:
-                with amp.autocast():
-                    if last_batch or self.num_gpus <= 1:
-                        losses, z_t, z0_pred = compute_losses()
-                    else:
-                        with self.model.no_sync():
-                            losses, z_t, z0_pred = compute_losses()
-                    loss = losses["loss"].mean() / num_grad_accumulate
-                scaler.scale(loss).backward()
-            else:
-                if last_batch or self.num_gpus <= 1:
-                    losses, z_t, z0_pred = compute_losses()
-                else:
-                    with self.model.no_sync():
-                        losses, z_t, z0_pred = compute_losses()
-                loss = losses["loss"].mean() / num_grad_accumulate
-                loss.backward()
-
-            # make logging
-            self.log_step_train(losses, tt, micro_data, z_t, z0_pred, last_batch)
-
-        if self.configs.train.use_fp16:
-            scaler.step(self.optimizer)
-            scaler.update()
-        else:
-            self.optimizer.step()
-
-        self.update_ema_model()
+        pass
 
     def adjust_lr(self, current_iters=None):
         if len(self.configs.train.milestones) > 0:
@@ -1011,18 +959,32 @@ class TrainerDistillDifIR(TrainerDifIR):
         # model information
         self.print_model_info()
 
+    '''
+    Tính toán giá trị loss, tính gradient dựa trên loss đó, và cập nhật tham số của mô hình
+    '''
     def training_step(self, data):
+        # Kích thước của batch hiện tại, được lấy từ dữ liệu đầu vào data['gt']
         current_batchsize = data['gt'].shape[0]
+        # Kích thước của micro-batch, được cấu hình trong configs.train
         micro_batchsize = self.configs.train.microbatch
+        # Số lần cần tích lũy gradient để xử lý toàn bộ batch lớn. 
+        # Nếu batch lớn hơn micro-batch, cần thực hiện nhiều lần tính toán và tích lũy gradient.
         num_grad_accumulate = math.ceil(current_batchsize / micro_batchsize)
 
+        # Sử dụng độ chính xác 16-bit (FP16) để giảm mức sử dụng bộ nhớ và tăng tốc huấn luyện.
         if self.configs.train.use_fp16:
+            # GradScaler đảm bảo tính toán gradient chính xác ngay cả khi sử dụng FP16.
             scaler = amp.GradScaler()
 
         self.optimizer.zero_grad()
+        # Chia batch lớn thành các micro-batch để giảm tải bộ nhớ GPU.
         for jj in range(0, current_batchsize, micro_batchsize):
+            # micro_data: Một phần dữ liệu trong batch hiện tại, được lấy từ jj đến jj+micro_batchsize
             micro_data = {key:value[jj:jj+micro_batchsize,] for key, value in data.items()}
+            # Biến cờ để kiểm tra xem đây có phải là micro-batch cuối cùng hay không
             last_batch = (jj+micro_batchsize >= current_batchsize)
+
+            # tt: Các timestep ngẫu nhiên trong quá trình diffusion được chọn từ [0,T]
             tt = torch.randint(
                     0, self.base_diffusion.num_timesteps,
                     size=(micro_data['gt'].shape[0],),
@@ -1030,17 +992,23 @@ class TrainerDistillDifIR(TrainerDifIR):
                     )
             
             if not self.use_reflow:
-                tt = torch.ones_like(tt) * (self.base_diffusion.num_timesteps - 1) # fix the time step of the student model
+                # fix the time step of the student model
+                tt = torch.ones_like(tt) * (self.base_diffusion.num_timesteps - 1) 
 
+            # latent_downsamping_sf: Tỷ lệ nén trong không gian tiềm ẩn (latent space).
             latent_downsamping_sf = 2**(len(self.configs.autoencoder.params.ddconfig.ch_mult) - 1)
             latent_resolution = micro_data['gt'].shape[-1] // latent_downsamping_sf
+            # noise: Nhiễu Gaussian được thêm vào dữ liệu.
             noise = torch.randn(
                     size=micro_data['gt'].shape[:2] + (latent_resolution, ) * 2,
                     device=micro_data['gt'].device,
                     )
+            
+            # model_kwargs: Tham số bổ sung cho mô hình, ví dụ: dữ liệu ảnh chất lượng thấp (lq)
             model_kwargs={'lq':micro_data['lq'],} if self.configs.model.params.cond_lq else None
             
-                
+            # Hàm tính loss, được cấu hình trước với các tham số cần thiết. 
+            # Loss được tính bằng hàm training_losses_distill.
             compute_losses = functools.partial(
                 self.base_diffusion.training_losses_distill,
                 self.model,
@@ -1051,16 +1019,12 @@ class TrainerDistillDifIR(TrainerDifIR):
                 first_stage_model=self.autoencoder,
                 model_kwargs=model_kwargs,
                 noise=noise,
-                distill_ddpm=self.distill_ddpm,
-                uncertainty_hyper=self.uncertainty_hyper,
-                uncertainty_num_aux=self.uncertainty_num_aux,
                 learn_xT=self.learn_xT,
                 finetune_use_gt=self.finetune_use_gt,
-                reformulated_reflow=self.reformulated_reflow,
-                xT_cov_loss=self.xT_cov_loss,
-                loss_in_image_space=self.loss_in_image_space
             )
+
             if self.configs.train.use_fp16:
+                # amp.autocast(): Đảm bảo các phép tính sử dụng FP16 khi cần.
                 with amp.autocast():
                     if last_batch or self.num_gpus <= 1:
                         losses, z_t, z0_pred = compute_losses()
@@ -1068,6 +1032,8 @@ class TrainerDistillDifIR(TrainerDifIR):
                         with self.model.no_sync():
                             losses, z_t, z0_pred = compute_losses()
                     loss = losses["loss"].mean() / num_grad_accumulate
+                
+                # loss.backward(): Tính gradient từ loss.
                 scaler.scale(loss).backward()
             else:
                 if last_batch or self.num_gpus <= 1:
@@ -1076,19 +1042,20 @@ class TrainerDistillDifIR(TrainerDifIR):
                     with self.model.no_sync():
                         losses, z_t, z0_pred = compute_losses()
                 loss = losses["loss"].mean() / num_grad_accumulate
+
+                # loss.backward(): Tính gradient từ loss.
                 loss.backward()
 
             # make logging
             self.log_step_train(losses, tt*0 if not self.use_reflow else tt, micro_data, z_t, z0_pred, last_batch)
 
         if self.configs.train.use_fp16:
+            # Cập nhật tham số mô hình
             scaler.step(self.optimizer)
             scaler.update()
         else:
-            self.optimizer.step()
-
-        self.update_ema_model()
-        
+            # Cập nhật tham số mô hình
+            self.optimizer.step()        
         
     def log_step_train(self, loss, tt, batch, z_t, z0_pred, flag=False, phase='train'):
         '''

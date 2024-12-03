@@ -131,7 +131,6 @@ if __name__ == "__main__":
         fn=predict,
         inputs=[
             gr.Image(type="filepath", label="Input: Low Quality Image"),
-            # gr.Checkbox(label="Single diffusion step", value=True),
             gr.Checkbox(label="Using colab?", value = True),
             gr.Dropdown(
                 choices=["SinSR", "ResShift"],

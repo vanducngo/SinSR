@@ -415,108 +415,6 @@ class GaussianDiffusion:
         sample = out["mean"] + nonzero_mask * th.exp(0.5 * out["log_variance"]) * noise
         return {"sample": sample, "pred_xstart": out["pred_xstart"], "mean":out["mean"]}
 
-    def ddim_inverse_loop(
-        self,
-        x,
-        y,
-        model,
-        first_stage_model=None,
-        noise=None,
-        noise_repeat=False,
-        clip_denoised=True,
-        denoised_fn=None,
-        model_kwargs=None,
-        device=None,
-        progress=False,
-    ):
-        """
-        Find the latent code zT that generate the high quality image $x$ conditioned on the low quaility one $y$
-        
-        :param x: the [N x C x ...] tensor of high-quality inputs.
-        :param y: the [N x C x ...] tensor of degraded inputs.
-        :param model: the model module.
-        :param first_stage_model: the autoencoder model
-        :param noise: if specified, the noise from the encoder to sample.
-                      Should be of the same shape as `shape`.
-        :param clip_denoised: if True, clip x_start predictions to [-1, 1].
-        :param denoised_fn: if not None, a function which applies to the
-            x_start prediction before it is used to sample.
-        :param model_kwargs: if not None, a dict of extra keyword arguments to
-            pass to the model. This can be used for conditioning.
-        :param device: if specified, the device to create the samples on.
-                       If not specified, use a model parameter's device.
-        :param progress: if True, show a tqdm progress bar.
-        :return: a non-differentiable batch of the the latent features of the input high-quality samples.
-        """
-        final = None
-        for sample in self.ddim_inverse_loop_progressive(
-            x,
-            y,
-            model,
-            first_stage_model=first_stage_model,
-            noise=noise,
-            noise_repeat=noise_repeat,
-            clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
-            model_kwargs=model_kwargs,
-            device=device,
-        ):
-            final = sample["sample"]
-        return final
-    
-    def inverse_reflow(
-        self,
-        x,
-        y,
-        model,
-        first_stage_model=None,
-        noise=None,
-        noise_repeat=False,
-        clip_denoised=True,
-        denoised_fn=None,
-        model_kwargs=None,
-        device=None,
-        progress=False,
-        hyper=1
-    ):
-        """
-        Find the latent code zT that generate the high quality image $x$ conditioned on the low quaility one $y$
-        
-        :param x: the [N x C x ...] tensor of high-quality inputs.
-        :param y: the [N x C x ...] tensor of degraded inputs.
-        :param model: the model module.
-        :param first_stage_model: the autoencoder model
-        :param noise: if specified, the noise from the encoder to sample.
-                      Should be of the same shape as `shape`.
-        :param clip_denoised: if True, clip x_start predictions to [-1, 1].
-        :param denoised_fn: if not None, a function which applies to the
-            x_start prediction before it is used to sample.
-        :param model_kwargs: if not None, a dict of extra keyword arguments to
-            pass to the model. This can be used for conditioning.
-        :param device: if specified, the device to create the samples on.
-                       If not specified, use a model parameter's device.
-        :param progress: if True, show a tqdm progress bar.
-        :return: a non-differentiable batch of the the latent features of the input high-quality samples.
-        """
-        if device is None:
-            device = next(model.parameters()).device
-        z_y = self.encode_first_stage(y, first_stage_model, up_sample=True) 
-        z_x = self.encode_first_stage(x, first_stage_model, up_sample=False)         
-    
-        t = th.tensor([0] * y.shape[0], device=device)
-        out = self.p_mean_variance(
-            model,
-            z_x,
-            z_y,
-            t,
-            clip_denoised=False,
-            denoised_fn=None,
-            model_kwargs=model_kwargs,
-        )
-        pred_xstart = out["pred_xstart"]
-        
-        final = (z_x - pred_xstart) / hyper
-        return final
 
 
     def p_sample_loop(
@@ -535,22 +433,20 @@ class GaussianDiffusion:
         apply_decoder=True
     ):
         """
-        Generate samples from the model.
-
-        :param y: the [N x C x ...] tensor of degraded inputs.
-        :param model: the model module.
-        :param first_stage_model: the autoencoder model
-        :param noise: if specified, the noise from the encoder to sample.
-                      Should be of the same shape as `shape`.
-        :param clip_denoised: if True, clip x_start predictions to [-1, 1].
-        :param denoised_fn: if not None, a function which applies to the
-            x_start prediction before it is used to sample.
-        :param model_kwargs: if not None, a dict of extra keyword arguments to
-            pass to the model. This can be used for conditioning.
-        :param device: if specified, the device to create the samples on.
-                       If not specified, use a model parameter's device.
-        :param progress: if True, show a tqdm progress bar.
-        :return: a non-differentiable batch of samples.
+        Tái tạo dữ liệu từ trạng thái nhiễu
+        
+        Đầu vào:
+            y: Tensor đầu vào [N,C,H,W], low quality image
+            model: Mô hình diffusion được sử dụng.
+            first_stage_model: the autoencoder model
+            noise: Nhiễu Gaussian được thêm vào dữ liệu đầu vào y.
+            clip_denoised:  Nếu True, đầu ra x0 được giới hạn trong khoảng [−1,1]
+            denoised_fn: Hàm tuỳ chỉnh áp dụng lên dự đoán x0
+            model_kwargs: Tham số bổ sung truyền vào mô hình
+            progress: Hiển thị thanh tiến trình (progress bar) nếu True
+        
+        Đầu ra:
+            Một batch dữ liệu đã tái tạo
         """
         final = None
         for sample in self.p_sample_loop_progressive(
@@ -571,50 +467,6 @@ class GaussianDiffusion:
             return self.decode_first_stage(final["sample"], first_stage_model)
         return final
 
-    def ddim_inverse_loop_progressive(
-            self, x, y, model,
-            first_stage_model=None,
-            noise=None,
-            noise_repeat=False,
-            clip_denoised=True,
-            denoised_fn=None,
-            model_kwargs=None,
-            device=None
-    ):
-        """
-        Generate samples from the model and yield intermediate samples from
-        each timestep of diffusion.
-
-            x: the high-quality image
-
-        Arguments are the same as p_sample_loop().
-        Returns a generator over dicts, where each dict is the return value of
-        p_sample().
-        """
-        if device is None:
-            device = next(model.parameters()).device
-        z_y = self.encode_first_stage(y, first_stage_model, up_sample=True) 
-        z_x = self.encode_first_stage(x, first_stage_model, up_sample=False) 
-    
-        indices = list(range(1, self.num_timesteps))
-        z_sample = z_x
-        
-        for i in indices:
-            t = th.tensor([i] * y.shape[0], device=device)
-            with th.no_grad():
-                out = self.ddim_inverse(
-                    model,
-                    z_sample,
-                    z_y,
-                    t,
-                    clip_denoised=clip_denoised,
-                    denoised_fn=denoised_fn,
-                    model_kwargs=model_kwargs,
-                    noise_repeat=noise_repeat,
-                )
-                yield out
-                z_sample = out["sample"]
-
     def p_sample_loop_progressive(
             self, y, model,
             first_stage_model=None,
@@ -628,24 +480,24 @@ class GaussianDiffusion:
             one_step=False
     ):
         """
-        Generate samples from the model and yield intermediate samples from
-        each timestep of diffusion.
-
-        Arguments are the same as p_sample_loop().
-        Returns a generator over dicts, where each dict is the return value of
-        p_sample().
+        Đầu vào:
+            - Kế thừa từ hàm p_sample_loop()
+        
+        Đầu ra:
+            - Trả về các trạng thái trung gian hoặc kết quả cuối cùng (x0).
         """
-        if device is None:
-            device = next(model.parameters()).device
+        
+        # Dữ liệu đầu vào y được mã hóa vào không gian tiềm ẩn
         z_y = self.encode_first_stage(y, first_stage_model, up_sample=True)
 
-        # generating noise
+        # Tạo nhiễu Gaussian
         if noise is None:
             noise = th.randn_like(z_y)
         if noise_repeat:
             noise = noise[0,].repeat(z_y.shape[0], 1, 1, 1)
         z_sample = self.prior_sample(z_y, noise)
 
+        # indices: Danh sách các timestep t theo thứ tự ngược (từ T đến 0)
         indices = list(range(self.num_timesteps))[::-1]
         if progress:
             # Lazy import so that we don't depend on tqdm.
@@ -656,6 +508,7 @@ class GaussianDiffusion:
         for i in indices:
             t = th.tensor([i] * y.shape[0], device=device)
             with th.no_grad():
+                # Gọi hàm p_sample để dự đoán trạng thái tiếp theo x_t−1 từ xt
                 out = self.p_sample(
                     model,
                     z_sample,
@@ -667,10 +520,13 @@ class GaussianDiffusion:
                     noise_repeat=noise_repeat,
                 )
                 if one_step:
+                    # bỏ qua các bước trung gian, trả về x0 ngay sau một bước
                     out["sample"]=out["pred_xstart"]
                     yield out
                     break
                 yield out
+
+                # Cập nhật trạng thái z_sample để sử dụng trong bước tiếp theo.
                 z_sample = out["sample"]
 
     def decode_first_stage(self, z_sample, first_stage_model=None, no_grad=True):
@@ -792,7 +648,9 @@ class GaussianDiffusion:
             self, model, teacher_model, x_start, y, t,
             first_stage_model=None,
             model_kwargs=None,
-            noise=None, distill_ddpm=False, uncertainty_hyper=False, uncertainty_num_aux=2, learn_xT=False, finetune_use_gt=False, xT_cov_loss=False, reformulated_reflow=False, loss_in_image_space=False
+            noise=None, 
+            learn_xT=False, 
+            finetune_use_gt=False
             ):
         
         if model_kwargs is None:
@@ -800,6 +658,7 @@ class GaussianDiffusion:
             
         # Tạo dữ liệu đầu vào cho quá trình khuếch tán (diffusion).
         z_y = self.encode_first_stage(y, first_stage_model, up_sample=True) # TODO can be eliminated to speed up, since z_y is already obtained in self.ddim_sample_loop/p_sample_loop
+        
         if noise is None:
             noise = th.randn_like(z_y)
         
@@ -814,62 +673,59 @@ class GaussianDiffusion:
         # pred_zstart: Dự đoán cuối cùng từ mô hình học sinh.
         pred_zstart = None
         
-        # if not finetune_use_gt:
-        if True:
-            # obtain *z_start_teacher*, i.e., x_0 predicted from x_T
-            # Lấy đầu ra của mô hình giáo viên để làm mục tiêu huấn luyện.
-            # sử dụng phương pháp DDIM (Denoising Diffusion Implicit Model)
-            # Trả về một dự đoán của trạng thái đầu tiên (ảnh gốc hoặc phiên bản sạch) 
-            # được mô hình giáo viên tái tạo từ dữ liệu đầu vào bị suy giảm y và nhiễu ϵ
-            # => lấy mẫu ngược (reverse sampling) từ xT -> x0
-            z_start_teacher = self.ddim_sample_loop(y, teacher_model, noise, first_stage_model, clip_denoised=True if first_stage_model is None else False, apply_decoder=False, model_kwargs=model_kwargs)["sample"]
+        # Lấy đầu ra của mô hình giáo viên để làm mục tiêu huấn luyện.
+        # sử dụng phương pháp DDIM (Denoising Diffusion Implicit Model)
+        # Trả về một dự đoán của trạng thái đầu tiên (ảnh gốc hoặc phiên bản sạch) 
+        # được mô hình giáo viên tái tạo từ dữ liệu đầu vào bị suy giảm y và nhiễu ϵ
+        # => lấy mẫu ngược (reverse sampling) từ xT -> x0
+        z_start_teacher = self.ddim_sample_loop(y, teacher_model, noise, first_stage_model, clip_denoised=True if first_stage_model is None else False, apply_decoder=False, model_kwargs=model_kwargs)["sample"]
 
-            # LossType là MSE
-            if self.loss_type == LossType.MSE:
-                # Dự đoán đầu ra từ mô hình học sinh
-                model_output = model(self._scale_input(z_t, t), t, **model_kwargs)
-                
-                z_start = z_start_teacher
-
-                # Mục tiêu cho mô hình học sinh
-                target = {
-                    ModelMeanType.START_X: z_start, # Đầu ra từ Mô hình giáo viên
-                    ModelMeanType.RESIDUAL: z_y - z_start, # Hiệu giữa đầu vào nhiễu và đầu ra.
-                    ModelMeanType.EPSILON: noise, # Nhiễu gốc.
-                    # EPSILON_SCALE: Nhiễu gốc được nhân với trọng số.
-                    ModelMeanType.EPSILON_SCALE: noise*self.kappa*_extract_into_tensor(self.sqrt_etas, t, noise.shape),
-                }[self.model_mean_type]
-
-                assert model_output.shape == target.shape   
-
-                # Mất mát giữa đầu ra của mô hình học sinh và mục tiêu (target).
-                # MSE
-                terms[loss_type] = mean_flat((target - model_output) ** 2)
-                
-                if self.model_mean_type == ModelMeanType.EPSILON_SCALE:
-                    terms[loss_type] /= (self.kappa**2 * _extract_into_tensor(self.etas, t, t.shape))
-                if self.loss_type == LossType.WEIGHTED_MSE:
-                    weights = _extract_into_tensor(self.weight_loss_mse, t, t.shape)
-                else:
-                    weights = 1
-                
-                # Tổng giá trị mất mát.
-                terms["loss"] += terms[loss_type] * weights
-                
-                # Config true from SinSR
-                if learn_xT:
-                    # Mô hình học sinh sẽ học cách dự đoán trạng thái nhiễu xT (trạng thái bị nhiễu mạnh nhất)
-                    # z_start_teacher: Z-start được dự đoán từ mô hình giáo viên.
-                    predicted_xT = model(self._scale_input(z_start_teacher, t), t*0, **model_kwargs) # TODO scale_input有必要吗？
-                    terms[loss_type+"_xT"] = mean_flat((z_t - predicted_xT) ** 2) # MSE
-                    terms["loss"] += terms[loss_type+"_xT"]   
-                     
-            else:
-                raise NotImplementedError(self.loss_type)
+        # LossType là MSE
+        if self.loss_type == LossType.MSE:
+            # Dự đoán đầu ra từ mô hình học sinh
+            model_output = model(self._scale_input(z_t, t), t, **model_kwargs)
             
-            # detach() tạo ra một tensor mới với cùng dữ liệu như model_output, 
-            # nhưng không liên kết với đồ thị tính toán gradient.
-            pred_zstart = model_output.detach()
+            z_start = z_start_teacher
+
+            # Mục tiêu cho mô hình học sinh
+            target = {
+                ModelMeanType.START_X: z_start, # Đầu ra từ Mô hình giáo viên
+                ModelMeanType.RESIDUAL: z_y - z_start, # Hiệu giữa đầu vào nhiễu và đầu ra.
+                ModelMeanType.EPSILON: noise, # Nhiễu gốc.
+                # EPSILON_SCALE: Nhiễu gốc được nhân với trọng số.
+                ModelMeanType.EPSILON_SCALE: noise*self.kappa*_extract_into_tensor(self.sqrt_etas, t, noise.shape),
+            }[self.model_mean_type]
+
+            assert model_output.shape == target.shape   
+
+            # Mất mát giữa đầu ra của mô hình học sinh và mục tiêu (target).
+            # MSE
+            terms[loss_type] = mean_flat((target - model_output) ** 2)
+            
+            if self.model_mean_type == ModelMeanType.EPSILON_SCALE:
+                terms[loss_type] /= (self.kappa**2 * _extract_into_tensor(self.etas, t, t.shape))
+            if self.loss_type == LossType.WEIGHTED_MSE:
+                weights = _extract_into_tensor(self.weight_loss_mse, t, t.shape)
+            else:
+                weights = 1
+            
+            # Tổng giá trị mất mát.
+            terms["loss"] += terms[loss_type] * weights
+            
+            # Config true from SinSR
+            if learn_xT:
+                # Mô hình học sinh sẽ học cách dự đoán trạng thái nhiễu xT (trạng thái bị nhiễu mạnh nhất)
+                # z_start_teacher: Z-start được dự đoán từ mô hình giáo viên.
+                predicted_xT = model(self._scale_input(z_start_teacher, t), t*0, **model_kwargs)
+                terms[loss_type+"_xT"] = mean_flat((z_t - predicted_xT) ** 2) # MSE
+                terms["loss"] += terms[loss_type+"_xT"]   
+                    
+        else:
+            raise NotImplementedError(self.loss_type)
+        
+        # detach() tạo ra một tensor mới với cùng dữ liệu như model_output, 
+        # nhưng không liên kết với đồ thị tính toán gradient.
+        pred_zstart = model_output.detach()
                
         # Sử dụng ground truth để huấn luyện
         #  Mô hình học sinh sẽ học cách dự đoán trạng thái x0  hoặc 𝑧_start trực tiếp từ ground truth 𝑥_start, 
