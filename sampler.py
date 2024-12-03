@@ -152,7 +152,7 @@ class Sampler(BaseSampler):
                 progress=False,
                 one_step=one_step,
                 apply_decoder=apply_decoder
-                )    # This has included the decoding for latent space
+                )
         
         if flag_pad and apply_decoder:
             # Sau khi quá trình suy luận hoàn tất, nếu ảnh được padding trước đó, phần thừa sẽ được cắt bỏ.
@@ -164,7 +164,6 @@ class Sampler(BaseSampler):
         
         # Giải mã
         return results.clamp_(-1.0, 1.0)
-
     
     def inference(self, in_path, out_path, one_step=False, return_tensor=False, apply_decoder=True):
         '''
@@ -251,21 +250,7 @@ class Sampler(BaseSampler):
             util_image.imwrite(im_sr, im_path, chn='bgr', dtype_in='uint8')
             if return_tensor:
                 return_res[im_path.stem]=im_sr_tensor
-        # else:
-        #     im_path_list = [x for x in in_path.glob("*.[jpJP][pnPN]*[gG]")]
-        #     self.write_log(f'Find {len(im_path_list)} images in {in_path}')
-
-        #     for im_path in im_path_list:
-        #         im_lq = util_image.imread(im_path, chn='rgb', dtype='float32')  # h x w x c
-        #         im_lq_tensor = util_image.img2tensor(im_lq).cuda()              # 1 x c x h x w
-        #         im_sr_tensor = _process_per_image(im_lq_tensor)
-        #         im_sr = util_image.tensor2img(im_sr_tensor, rgb2bgr=True, min_max=(0.0, 1.0))
-
-        #         im_path = out_path / f"{im_path.stem}.png"
-        #         util_image.imwrite(im_sr, im_path, chn='bgr', dtype_in='uint8')
-        #         if return_tensor:
-        #             return_res[im_path.stem]=im_sr_tensor
-
+        
         self.write_log(f"Processing done, enjoy the results in {str(out_path)}")
         return return_res
     
