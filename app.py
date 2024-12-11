@@ -1,7 +1,3 @@
-#!/usr/bin/env python
-# -*- coding:utf-8 -*-
-# Power by Yufei Wang
-
 import argparse
 import gradio as gr
 from pathlib import Path
@@ -109,7 +105,6 @@ if __name__ == "__main__":
     title = "SinSR: Diffusion-Based Image Super-Resolution in a Single Step"
     description = ""
     article = ''
-    
 
     if args.colab:
         examples=[
